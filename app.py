@@ -4,117 +4,124 @@ from PyPDF2 import PdfReader
 from PIL import Image
 import os
 
-# --- 1. إعدادات الصفحة (استخدام الفاصلة الإنجليزية الكود بالكامل إنجليزي) ---
+# --- 1. إعدادات الصفحة ودعم اللغة العربية ---
 st.set_page_config(page_title="مساعد المذاكرة الذكي", layout="wide")
 
-# تحسين مظهر الواجهة
+# تنسيق الواجهة لتدعم RTL (من اليمين لليسار) والخطوط العربية
 st.markdown("""
     <style>
-    .main { text-align: right; direction: rtl; }
-    div[data-testid="stExpander"] div { text-align: right; direction: rtl; }
+    @import url('https://fonts.googleapis.com/css2?family=Cairo&display=swap');
+    html, body, [data-testid="stSidebar"], .stMarkdown, p, h1, h2, h3, div {
+        font-family: 'Cairo', sans-serif;
+        direction: rtl;
+        text-align: right;
+    }
+    .stTextArea textarea { direction: rtl; text-align: right; }
+    .stButton>button { width: 100%; border-radius: 10px; background-color: #4CAF50; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 2. إعداد الذكاء الاصطناعي (API Key) ---
-# سيتم جلب المفتاح من Secrets في Streamlit Cloud
 try:
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
-    else:
-        api_key = None
-        
-    if api_key:
         genai.configure(api_key=api_key)
-        # استخدام موديل Gemini 1.5 Flash الأسرع والأفضل للصور
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # استخدام المسار الكامل للموديل لتجنب خطأ 404
+        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     else:
-        st.warning("⚠️ لم يتم العثور على مفتاح API في الإعدادات (Secrets).")
+        st.error("⚠️ لم يتم العثور على مفتاح API في الإعدادات (Secrets). يرجى إضافته باسم GOOGLE_API_KEY")
         st.stop()
 except Exception as e:
     st.error(f"خطأ في إعداد API: {e}")
     st.stop()
 
-# --- 3. وظيفة معالجة الـ PDF واستخراج النص ---
-def get_pdf_text(pdf_file):
-    text = ""
+# --- 3. وظيفة استخراج النص العربي من الكتاب ---
+def get_pdf_content(pdf_file):
+    text_content = ""
     try:
-        pdf_reader = PdfReader(pdf_file)
-        for i, page in enumerate(pdf_reader.pages):
-            page_content = page.extract_text() or ""
-            # إضافة رقم الصفحة بوضوح ليراه الذكاء الاصطناعي
-            text += f"\n\n--- رقم الصفحة: ({i+1}) ---\n{page_content}\n"
-        return text
+        reader = PdfReader(pdf_file)
+        for i, page in enumerate(reader.pages):
+            page_text = page.extract_text() or ""
+            # إضافة علامات صفحات واضحة للبحث
+            text_content += f"\n\n--- رقم الصفحة الأساسي: ({i+1}) ---\n{page_text}\n"
+        return text_content
     except Exception as e:
-        st.error(f"خطأ في قراءة ملف PDF: {e}")
+        st.error(f"خطأ في قراءة الـ PDF: {e}")
         return ""
 
-# --- 4. إدارة تحميل الكتاب (تلقائي أو يدوي) ---
-st.title("📖 مساعد المادة الذكي")
+# --- 4. إدارة محتوى الكتاب (حفظ دائم) ---
+st.title("📚 مساعدك الدراسي الذكي")
+st.write("حل الأسئلة، تصحيح الإجابات، وتحديد مكان المعلومة في الكتاب.")
 
-# محاولة تحميل الكتاب الدائم من السيرفر (GitHub)
-if 'book_content' not in st.session_state:
+if 'book_data' not in st.session_state:
+    # محاولة البحث عن الكتاب المرفوع مسبقاً على GitHub
     if os.path.exists("book.pdf"):
-        with st.spinner("جاري قراءة الكتاب المحفوظ (book.pdf)..."):
+        with st.spinner("جاري تحميل الكتاب المحفوظ (book.pdf)..."):
             with open("book.pdf", "rb") as f:
-                st.session_state.book_content = get_pdf_text(f)
-        st.success("✅ تم تحميل الكتاب الأساسي بنجاح.")
+                st.session_state.book_data = get_pdf_content(f)
+        st.success("✅ تم تحميل الكتاب المرجعي بنجاح.")
     else:
-        st.info("💡 لم يتم العثور على ملف 'book.pdf'. يمكنك رفعه الآن.")
-        uploaded_file = st.file_uploader("ارفع ملف الكتاب (PDF)", type="pdf")
+        st.info("💡 ارفعي ملف باسم 'book.pdf' على GitHub ليكون متاحاً دائماً.")
+        uploaded_file = st.file_uploader("أو ارفعي الكتاب الآن يدوياً", type="pdf")
         if uploaded_file:
-            st.session_state.book_content = get_pdf_text(uploaded_file)
-            st.success("تم رفع ومعالجة الكتاب بنجاح!")
+            st.session_state.book_data = get_pdf_content(uploaded_file)
+            st.success("تم تحليل الكتاب المرفوع!")
 
-# --- 5. واجهة طرح الأسئلة ---
-if 'book_content' in st.session_state:
+# --- 5. واجهة طرح الأسئلة (3 طرق) ---
+if 'book_data' in st.session_state:
     st.divider()
-    st.subheader("❓ اسأل عن أي شيء في الكتاب")
+    st.subheader("📝 اسأل سؤالك")
     
-    # تبويبات لخيارات الإدخال المختلفة
-    tab1, tab2, tab3 = st.tabs(["📸 تصوير سؤال", "🖼️ رفع صورة", "✍️ سؤال نصي"])
+    tabs = st.tabs(["📸 تصوير بالكاميرا", "🖼️ رفع صورة", "✍️ كتابة سؤال"])
     
-    user_input = None
-    input_type = None
+    query_payload = None
+    is_visual = False
 
-    with tab1:
-        cam_img = st.camera_input("التقط صورة واضحة للسؤال")
+    with tabs[0]:
+        cam_img = st.camera_input("التقط صورة واضحة للسؤال من كتابك")
         if cam_img:
-            user_input = Image.open(cam_img)
-            input_type = "image"
+            query_payload = Image.open(cam_img)
+            is_visual = True
 
-    with tab2:
-        up_img = st.file_uploader("اختر صورة من استوديو الموبايل", type=["jpg", "png", "jpeg"])
+    with tabs[1]:
+        up_img = st.file_uploader("اختر صورة السؤال من الموبايل", type=["jpg", "png", "jpeg"])
         if up_img:
-            user_input = Image.open(up_img)
-            input_type = "image"
+            query_payload = Image.open(up_img)
+            is_visual = True
 
-    with tab3:
-        txt_query = st.text_area("اكتب سؤالك هنا بالتفصيل...")
-        if st.button("إرسال السؤال النصي"):
+    with tabs[2]:
+        txt_query = st.text_area("اكتب سؤالك هنا (مثال: هل العبارة كذا صحيحة؟ أو اكتب السؤال ليتم حله)")
+        if st.button("حل السؤال المكتوب"):
             if txt_query:
-                user_input = txt_query
-                input_type = "text"
+                query_payload = txt_query
+                is_visual = False
 
-    # --- 6. معالجة الإجابة باستخدام Gemini ---
-    if user_input:
-        with st.spinner("جاري البحث عن الحل في الكتاب..."):
-            # تجهيز التعليمات (Prompt)
-            prompt = f"""
-            بناءً على نص الكتاب المرفق أدناه فقط، أجب على السؤال التالي بدقة. 
-            إذا كان السؤال في الصورة، فقم بتحليل الصورة أولاً.
-            بعد الإجابة، اذكر بوضوح رقم الصفحة التي وجدت فيها الحل.
+    # --- 6. المعالجة والرد النهائي ---
+    if query_payload:
+        with st.spinner("جاري فحص المنهج واستخراج الإجابة..."):
+            # تعليمات صارمة للموديل لضمان الدقة المطلوبة
+            prompt_instructions = f"""
+            أنت مساعد تعليمي متخصص في المناهج العربية. استخدم النص المرفق من الكتاب فقط للإجابة.
             
-            نص الكتاب المتاح:
-            {st.session_state.book_content[:40000]} 
+            مهمتك كالتالي:
+            1. إذا كان السؤال (صح أو خطأ): حدد هل العبارة صحيحة أم خاطئة. إذا كانت خاطئة، يجب أن تصححها بناءً على الكتاب.
+            2. إذا كان السؤال (اختياري): حدد الاختيار الصحيح مع شرح بسيط للسبب.
+            3. إذا كان سؤالاً مقالياً: أجب عليه بدقة واختصار.
+            4. **شرط إلزامي**: ابحث عن رقم الصفحة التي وردت فيها المعلومة واذكره بوضوح (مثال: 'موجود في الصفحة رقم 12'). استخدم علامات 'رقم الصفحة الأساسي: (X)' الموجودة في النص لتحديدها.
+            
+            محتوى الكتاب المدرسي:
+            {st.session_state.book_data[:45000]}
             """
             
             try:
-                if input_type == "image":
-                    response = model.generate_content([prompt, user_input])
+                if is_visual:
+                    # إرسال الصورة مع التعليمات
+                    response = model.generate_content([prompt_instructions, query_payload])
                 else:
-                    response = model.generate_content(prompt + "\n\nالسؤال هو: " + user_input)
+                    # إرسال النص مع التعليمات
+                    response = model.generate_content(prompt_instructions + "\n\nالسؤال المطلوب حله هو: " + query_payload)
                 
-                st.markdown("### ✨ الإجابة ورقم الصفحة:")
+                st.markdown("### 🎯 الإجابة النموذجية:")
                 st.info(response.text)
             except Exception as e:
-                st.error(f"حدث خطأ أثناء التواصل مع الذكاء الاصطناعي: {e}")
+                st.error(f"حدث خطأ أثناء المعالجة: {e}")
