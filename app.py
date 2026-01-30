@@ -5,7 +5,7 @@ from PIL import Image
 import os
 
 # --- 1. إعدادات الصفحة والـ API ---
-st.set_page_config(page_title="مساعد المذاكرة"، layout="wide")
+st.set_page_config(page_title="مساعد المذاكرة", layout="wide")
 
 # جلب الـ API Key من "Secrets" ليكون مخفياً ومحفوظاً للكل
 # إذا كنتِ تشغلينه محلياً، سيبحث عنه في ملف secrets.toml
