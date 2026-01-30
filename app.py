@@ -2,95 +2,84 @@ import streamlit as st
 import google.generativeai as genai
 from PyPDF2 import PdfReader
 from PIL import Image
-import io
+import os
 
-# --- إعدادات الصفحة ---
-st.set_page_config(page_title="المساعد الدراسي الذكي", page_icon="📖", layout="wide")
+# --- 1. إعدادات الصفحة والـ API ---
+st.set_page_config(page_title="مساعد المذاكرة"، layout="wide")
 
-# تصميم واجهة المستخدم بلغة CSS بسيطة لتحسين المظهر على الموبايل
-st.markdown("""
-    <style>
-    .main { text-align: right; direction: rtl; }
-    .stButton>button { width: 100%; border-radius: 20px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- إعداد الذكاء الاصطناعي ---
-def setup_gemini(api_key):
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-1.5-flash')
-
-# --- وظيفة معالجة الكتاب ---
-def process_pdf(file):
-    reader = PdfReader(file)
-    full_text = []
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text()
-        if text:
-            full_text.append(f"--- بداية الصفحة ({i+1}) ---\n{text}\n--- نهاية الصفحة ({i+1}) ---")
-    return "\n".join(full_text)
-
-# --- واجهة التطبيق ---
-st.title("📖 مساعد الامتحانات الذكي")
-st.info("ارفع كتابك بصيغة PDF، ثم صور أي سؤال وسأعطيك الإجابة ورقم الصفحة.")
-
-# الجانب الجانبي للإعدادات
-with st.sidebar:
-    st.header("⚙️ الإعدادات")
-    api_key = st.text_input("أدخل Google API Key:", type="password")
-    st.markdown("[احصل على مفتاح مجاني من هنا](https://aistudio.google.com/)")
-
-if not api_key:
-    st.warning("رجاءً أدخل مفتاح API في القائمة الجانبية للبدء.")
+# جلب الـ API Key من "Secrets" ليكون مخفياً ومحفوظاً للكل
+# إذا كنتِ تشغلينه محلياً، سيبحث عنه في ملف secrets.toml
+try:
+    API_KEY = st.secrets["GOOGLE_API_KEY"]
+    genai.configure(api_key=API_KEY)
+    # استخدام الإصدار الأحدث المستقر
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("لم يتم العثور على API Key. يرجى إعداده في Streamlit Secrets.")
     st.stop()
 
-model = setup_gemini(api_key)
+# --- 2. وظيفة تحميل الكتاب (من الملف المرفق أو المرفوع) ---
+def get_pdf_text(pdf_docs):
+    text = ""
+    for pdf in pdf_docs:
+        pdf_reader = PdfReader(pdf)
+        for i, page in enumerate(pdf_reader.pages):
+            text += f"\n--- صفحة ({i+1}) ---\n" + (page.extract_text() or "")
+    return text
 
-# الخطوة 1: رفع الكتاب
-uploaded_book = st.file_uploader("1️⃣ ارفع كتاب المادة (PDF)", type="pdf")
+# --- 3. واجهة المستخدم ---
+st.title("📚 مساعدك الدراسي الذكي")
 
-if uploaded_book:
-    # حفظ نص الكتاب في "جلسة العمل" لسرعة الاستجابة
+# خيار حفظ الكتاب: سنحاول البحث عن ملف اسمه 'book.pdf' في ملفات المشروع أولاً
+if os.path.exists("book.pdf"):
     if 'book_content' not in st.session_state:
-        with st.spinner("جاري تحليل محتوى الكتاب... انتظر لحظة"):
-            st.session_state.book_content = process_pdf(uploaded_book)
-            st.success("تم حفظ الكتاب في الذاكرة!")
+        with st.open("book.pdf", "rb") as f:
+            st.session_state.book_content = get_pdf_text([f])
+    st.success("✅ تم تحميل الكتاب الأساسي (المحفوظ)")
+else:
+    uploaded_file = st.file_uploader("ارفع كتاب المادة (PDF) - سيتم مسحه عند تحديث الصفحة", type="pdf")
+    if uploaded_file:
+        st.session_state.book_content = get_pdf_text([uploaded_file])
+        st.success("تم رفع الكتاب مؤقتاً.")
 
+# --- 4. إدخال السؤال بـ 3 طرق ---
+if 'book_content' in st.session_state:
     st.divider()
+    st.subheader("❓ اسأل سؤالك")
+    
+    tab1, tab2, tab3 = st.tabs(["📸 تصوير بالكاميرا", "🖼️ رفع صورة", "✍️ كتابة نص"])
+    
+    input_data = None
+    
+    with tab1:
+        cam_image = st.camera_input("التقط صورة للسؤال")
+        if cam_image: input_data = Image.open(cam_image)
+            
+    with tab2:
+        up_image = st.file_uploader("اختر صورة من الموبايل", type=["jpg", "png", "jpeg"])
+        if up_image: input_data = Image.open(up_image)
+            
+    with tab3:
+        query_text = st.text_area("اكتب سؤالك هنا...")
+        if st.button("حل السؤال المكتوب"):
+            input_data = query_text
 
-    # الخطوة 2: تصوير السؤال
-    st.subheader("2️⃣ صور السؤال (اختياري أو صح/خطأ)")
-    captured_image = st.camera_input("التقط صورة للسؤال")
-
-    if captured_image:
-        img = Image.open(captured_image)
-        
-        with st.spinner("جاري قراءة السؤال والبحث في الكتاب..."):
-            # صياغة الطلب (Prompt) بعناية لضمان الدقة
+    # --- 5. معالجة الإجابة ---
+    if input_data:
+        with st.spinner("جاري استخراج الحل من الكتاب..."):
             prompt = f"""
-            أنت خبير تعليمي. أمامك نص كتاب مدرسي وصورة لسؤال.
-            المطلوب منك:
-            1. قراءة السؤال من الصورة المرفقة.
-            2. البحث عن الإجابة الصحيحة من نص الكتاب المرفق فقط.
-            3. إذا كان السؤال اختيار من متعدد، حدد الاختيار الصحيح مع التبرير.
-            4. إذا كان صح أو خطأ، أجب مع ذكر السبب.
-            5. **هام جداً**: اذكر رقم الصفحة التي وجدت فيها الإجابة بناءً على علامات "بداية الصفحة (X)" الموجودة في النص.
-
-            نص الكتاب المرفق:
-            {st.session_state.book_content}
+            أنت مساعد دراسي. استخدم نص الكتاب المرفق للإجابة على السؤال بدقة.
+            اذكر الإجابة ورقم الصفحة.
+            
+            نص الكتاب:
+            {st.session_state.book_content[:50000]} 
             """
             
             try:
-                # إرسال الصورة والنص للموديل
-                response = model.generate_content([prompt, img])
-                
-                # عرض النتيجة
-                st.markdown("### ✨ الإجابة النموذجية:")
-                st.success(response.text)
-                
+                # التحقق إذا كان المدخل نصاً أو صورة
+                content = [prompt, input_data] if not isinstance(input_data, str) else [prompt + "\nالسؤال: " + input_data]
+                response = model.generate_content(content)
+                st.markdown("### 🎯 الإجابة:")
+                st.info(response.text)
             except Exception as e:
-                st.error(f"حدث خطأ أثناء التحليل: {e}")
-
-# تذييل الصفحة
-st.markdown("---")
-st.caption("تم التطوير لمساعدتك في المذاكرة • استخدم الذكاء الاصطناعي بمسؤولية.")
+                st.error(f"حدث خطأ: {e}")
